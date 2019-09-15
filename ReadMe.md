@@ -1,1 +1,1 @@
-一款go的science上net的software，前期计划做http/sock5本地端，SS/SSR服务端，win客户端
+
