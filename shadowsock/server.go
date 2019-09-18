@@ -55,7 +55,7 @@ func InitProxyServer(ip string, port uint16)  error{
 	return nil
 }
 // 入口函数
-func HttpProxyServerStart() error{
+func ShadowSockServerStart() error{
 	if GlobalSSServer.addr == nil{
 		logger.Fatal("ShadowSock服务未初始化")
 	}
@@ -67,13 +67,12 @@ func HttpProxyServerStart() error{
 	pool := message.CreatePool(message.DefaultMessageSize, message.DefaultMessageChanSize)
 	for {
 		conn, err := tcpListener.Accept()
-		// debug
-		fmt.Println("接收到一个连接")
 		if err!=nil{
 			break
 		}
 		// 开始处理连接
-		go handleConnection(conn, pool)
+		pCipher, err := NewCipher("aes-256-cfb", "123456")
+		go handleConnection(NewSSConn(conn, pCipher), pool)
 	}
 	return err
 }
@@ -84,10 +83,10 @@ func handleConnection(conn net.Conn, pool message.MessagePool) error{
 	remote_addr_str, err := handShake(conn)
 	if err!=nil{
 		// 握手失败
-		fmt.Println("握手失败")
+		fmt.Println(conn.RemoteAddr().String()+"握手失败")
 		return err
 	}
-	fmt.Println("远端ip:"+remote_addr_str)
+	fmt.Println(conn.RemoteAddr().String()+"握手成功")
 	remote, err := net.Dial("tcp", remote_addr_str)
 	if err != nil {
 		fmt.Println("连接不上目标服务器")
@@ -98,6 +97,7 @@ func handleConnection(conn net.Conn, pool message.MessagePool) error{
 		}
 		return err
 	}
+	fmt.Println("来源"+conn.RemoteAddr().String()+"连接目标服务器成功");
 	writeBuf := message.GetMessage(&pool)
 	readBuf := message.GetMessage(&pool)
 	go Pipe(conn, remote,writeBuf)
@@ -128,6 +128,7 @@ func handleConnection(conn net.Conn, pool message.MessagePool) error{
 func handShake(conn net.Conn) (string, error){
 	addr_str, err :=resolveHostPortByShake(conn)
 	if err!=nil{
+		fmt.Println(err.Error());
 		// 解析失败
 		return "", err
 	}
@@ -163,6 +164,7 @@ func resolveHostPortByShake(conn net.Conn) (host string,err error){
 	if _, err = io.ReadFull(conn, buf[reqStart:reqEnd]); err != nil {
 		return
 	}
+	// 没有hmac校验
 
 	// Return string for typeIP is not most efficient, but browsers (Chrome,
 	// Safari, Firefox) all seems using typeDm exclusively. So this is not a
@@ -185,7 +187,8 @@ func Pipe(src, dst net.Conn, buf *message.Message) {
 		// 清空msg.Data
 		message.EmptyMessage(buf, message.DefaultMessageSize)
 		n, err := src.Read(buf.Data)
-		fmt.Println("转发消息:"+string(buf.Data))
+		fmt.Print(string("debug的数据:"+string(buf.Data[0:n])))
+		fmt.Println("转发数据，"+src.RemoteAddr().String()+"->"+dst.RemoteAddr().String())
 		// read may return EOF with n > 0
 		// should always process n > 0 bytes before handling error
 		if n > 0 {

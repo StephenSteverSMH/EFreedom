@@ -2,7 +2,9 @@ package local_http
 
 import (
 	"EFreedom/message"
+	"EFreedom/shadowsock"
 	"bufio"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
@@ -17,7 +19,7 @@ import (
 var logger *log.Logger
 
 // 远程代理地址
-const remote_addr = "127.0.0.1:15001"
+const remote_addr = "10.28.202.74:15001"
 
 // http代理服务器
 type ProxyServer struct{
@@ -64,8 +66,9 @@ func HttpProxyServerStart() error{
 		if err!=nil{
 			break
 		}
+		pCipher, err := shadowsock.NewCipher("aes-256-cfb", "123456")
 		// 开始处理连接
-		go handleConnection(conn, pool)
+		go handleConnection(shadowsock.NewSSConn(conn, pCipher), pool)
 	}
 	return err
 }
@@ -130,7 +133,7 @@ func handShake(conn net.Conn) (net.Conn, error){
 		}
 		host :=strings.Split(req.Host,":")
 		remote.Write(buildSSPackage(host[0], host[1]))
-		remote.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x08, 0x43})
+		//remote.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x08, 0x43})
 		return remote, nil
 	}
 	// 非https
@@ -144,12 +147,21 @@ func handShake(conn net.Conn) (net.Conn, error){
 		return nil, err
 	}
 	host :=strings.Split(req.Host,":")
-	remote.Write(buildSSPackage(host[0], host[1]))
-	remote.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x08, 0x43})
+	if len(host)==1{
+		// 没有带端口
+		host = append(host, "80")
+	}
+	fmt.Println(conn.RemoteAddr().String()+"握手时http数据包的host和port"+host[0]+host[1])
+	ssPackage := buildSSPackage(host[0], host[1])
+	fmt.Println("SS包"+hex.EncodeToString(ssPackage))
+	remote.Write(ssPackage)
+	//没有hmac校验
+	//remote.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x08, 0x43})
 	req.Write(remote)
 	return remote, nil
 }
 
+// 建立SS握手包
 func buildSSPackage(host, port string) []byte{
 	buf := make([]byte, 2 + len(host)+ 2)
 	// AtypDomainName
@@ -177,7 +189,7 @@ func Pipe(src, dst net.Conn, buf *message.Message) {
 		if n > 0 {
 			// Note: avoid overwrite err returned by Read.
 			// 用于调试查看转发的数据
-			fmt.Println("转发的数据: "+string(buf.Data[0:n]))
+			fmt.Println("转发的数据, "+ src.RemoteAddr().String()+"->"+dst.RemoteAddr().String())
 			if _, err := dst.Write(buf.Data[0:n]); err != nil {
 				fmt.Println("write error")
 				break
